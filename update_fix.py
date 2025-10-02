@@ -1,3 +1,5 @@
+import asyncio
+
 def orchestrate_request_stream(self, user_input: str, thread_id: Optional[str] = None):
     """Stream version of orchestrate_request for UI integration"""
 
@@ -5,47 +7,26 @@ def orchestrate_request_stream(self, user_input: str, thread_id: Optional[str] =
         yield "Error: No active orchestration configuration set"
         return
 
+    async def runner():
+        return await self.orchestrate_request(user_input, thread_id)
+
     try:
-        # Check if there's already a running event loop
         try:
+            # If an event loop is already running, schedule the task there
             loop = asyncio.get_running_loop()
-            # If we're already in an event loop, we need to use a different approach
-            import concurrent.futures
-            
-            # Create a new thread to run the async function
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(self._run_orchestration_sync, user_input, thread_id)
-                result = future.result()
-                
+            future = asyncio.ensure_future(runner())
+            result = loop.run_until_complete(future)  # ❌ still risky
         except RuntimeError:
-            # No event loop is running, create a new one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            try:
-                result = loop.run_until_complete(
-                    self.orchestrate_request(user_input, thread_id)
-                )
-            finally:
-                loop.close()
-
-        # Stream the result character by character for UI consistency
-        for char in result:
-            yield char
-
+            # No loop running -> safe to call asyncio.run
+            result = asyncio.run(runner())
+    except RuntimeError:
+        # Jupyter/Notebook safe fallback
+        import nest_asyncio
+        nest_asyncio.apply()
+        result = asyncio.get_event_loop().run_until_complete(runner())
     except Exception as e:
         yield f"Error during orchestration: {str(e)}"
+        return
 
-
-def _run_orchestration_sync(self, user_input: str, thread_id: Optional[str] = None) -> str:
-    """Helper method to run orchestration in a new event loop"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    try:
-        result = loop.run_until_complete(
-            self.orchestrate_request(user_input, thread_id)
-        )
-        return result
-    finally:
-        loop.close()
+    for char in result:
+        yield char

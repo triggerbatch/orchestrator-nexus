@@ -1,52 +1,45 @@
-def orchestrate_request_stream(self, user_input: str, thread_id: Optional[str] = None):
-    """Stream version with agent-by-agent updates"""
+def get_filtered_tools_for_profile(self):
+    """Get only the MCP tools that are assigned to this agent's profile"""
+    # Get all available MCP tools
+    all_mcp_tools = asyncio.run(self.get_tools())
     
-    if not self.active_orchestration:
-        yield "Error: No active orchestration configuration set"
-        return
+    if not self.actions or len(self.actions) == 0:
+        return []
+    
+    # Extract action names from profile
+    profile_action_names = {action.get("name") for action in self.actions if "name" in action}
+    
+    # Filter MCP tools
+    filtered = [
+        tool for tool in all_mcp_tools 
+        if tool.get("function", {}).get("name") in profile_action_names
+    ]
+    
+    print(f"[{self.profile.name}] MCP tools: {len(all_mcp_tools)} available, {len(filtered)} assigned")
+    
+    return filtered
 
-    try:
-        yield f"🎯 **Orchestrator ({self.active_orchestration.orchestrator_profile})**: Processing request...\n\n"
-        
-        # Get orchestrator's decision
-        orchestrator = self.initialize_agent_with_profile(
-            self.active_orchestration.orchestrator_profile,
-            self.active_orchestration.orchestrator_engine
+def get_response_stream(self, user_input, thread_id=None):
+    self.last_message = ""
+    self.messages += [{"role": "user", "content": user_input}]
+    
+    # Get filtered tools based on profile
+    filtered_tools = self.get_filtered_tools_for_profile()
+    
+    if filtered_tools and len(filtered_tools) > 0:
+        tools_serializable = self.serialize_tools(filtered_tools)
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=self.messages,
+            temperature=self.temperature,
+            tools=tools_serializable,
+            tool_choice="auto",
         )
-        
-        orchestration_prompt = self._build_orchestration_prompt(user_input)
-        
-        full_response = ""
-        for chunk in orchestrator.get_response_stream(orchestration_prompt)():
-            full_response += chunk
-            yield chunk
-        
-        yield "\n\n"
-        
-        # Check for delegation
-        if self._check_for_delegation(full_response):
-            target_profile = self._extract_delegate_profile(full_response)
-            yield f"↪️ **Delegating to {target_profile}**...\n\n"
-            
-            delegated_response = self._handle_delegation(
-                user_input,
-                full_response,
-                self.active_orchestration.orchestrator_profile
-            )
-            
-            yield f"📋 **{target_profile} Response**:\n{delegated_response}\n\n"
-            
-            # Final synthesis
-            yield f"🎯 **Orchestrator Synthesis**:\n"
-            synthesis_prompt = f"""Based on:
-Original: {user_input}
-Your analysis: {full_response}
-{target_profile} result: {delegated_response}
-
-Final response:"""
-            
-            for chunk in orchestrator.get_response_stream(synthesis_prompt)():
-                yield chunk
-
-    except Exception as e:
-        yield f"Error: {str(e)}"
+    else:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=self.messages,
+            temperature=self.temperature,
+        )
+    
+    # ... rest of streaming logic

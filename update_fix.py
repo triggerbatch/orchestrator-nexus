@@ -1,13 +1,19 @@
 def get_filtered_tools_for_profile(self):
     """Get only the MCP tools that are assigned to this agent's profile"""
-    # Get all available MCP tools
     all_mcp_tools = asyncio.run(self.get_tools())
     
     if not self.actions or len(self.actions) == 0:
         return []
     
-    # Extract action names from profile
-    profile_action_names = {action.get("name") for action in self.actions if "name" in action}
+    # Handle actions as either strings or dicts
+    profile_action_names = set()
+    for action in self.actions:
+        if isinstance(action, str):
+            profile_action_names.add(action)
+        elif isinstance(action, dict) and "name" in action:
+            profile_action_names.add(action["name"])
+    
+    print(f"[{self.profile.name}] Looking for tools: {profile_action_names}")
     
     # Filter MCP tools
     filtered = [
@@ -15,31 +21,29 @@ def get_filtered_tools_for_profile(self):
         if tool.get("function", {}).get("name") in profile_action_names
     ]
     
-    print(f"[{self.profile.name}] MCP tools: {len(all_mcp_tools)} available, {len(filtered)} assigned")
+    print(f"[{self.profile.name}] Found {len(filtered)} matching tools")
     
     return filtered
 
-def get_response_stream(self, user_input, thread_id=None):
-    self.last_message = ""
-    self.messages += [{"role": "user", "content": user_input}]
-    
-    # Get filtered tools based on profile
-    filtered_tools = self.get_filtered_tools_for_profile()
-    
-    if filtered_tools and len(filtered_tools) > 0:
-        tools_serializable = self.serialize_tools(filtered_tools)
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=self.messages,
-            temperature=self.temperature,
-            tools=tools_serializable,
-            tool_choice="auto",
-        )
-    else:
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=self.messages,
-            temperature=self.temperature,
-        )
-    
-    # ... rest of streaming logic
+
+def initialize_agent_with_profile(self, profile_name: str, engine_name: str = None):
+    try:
+        # ... existing code to get agent and profile ...
+        
+        # Load actions from profile
+        if hasattr(profile, 'actions') and profile.actions and agent.supports_actions:
+            # Handle both string list and dict list formats
+            action_names = []
+            for action in profile.actions:
+                if isinstance(action, str):
+                    action_names.append(action)
+                elif isinstance(action, dict) and 'name' in action:
+                    action_names.append(action['name'])
+            
+            # Get full action objects from nexus
+            agent.actions = self.nexus.get_actions(action_names)
+            print(f"Loaded {len(agent.actions)} actions for {profile_name}: {action_names}")
+        else:
+            agent.actions = []
+        
+        # ... rest of code ...

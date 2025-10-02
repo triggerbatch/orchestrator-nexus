@@ -1,0 +1,59 @@
+orchestrationConfig:
+  name: "Document_Processing_Pipeline"
+  orchestrator_profile: "OCR_Agent"  # The profile that acts as orchestrator
+  orchestrator_engine: "AzureOpenAIAgent"  # The underlying LLM engine
+  description: "OCR → Validation → Loading pipeline for document processing"
+
+  # Define agent profiles and their relationships
+  agent_network:
+    - profile: "OCR_Agent"
+      engine: "AzureOpenAIAgent"  # Which LLM engine to use
+      role: "ocr_processor"
+      capabilities:
+        - "text_extraction"
+        - "ocr_processing"
+        - "document_structure_recognition"
+      can_delegate_to:
+        - "Business_Validation_Agent"  # Can delegate to validation
+
+    - profile: "Business_Validation_Agent"
+      engine: "AzureOpenAIAgent"
+      role: "validator"
+      capabilities:
+        - "data_validation"
+        - "business_rules_checking"
+        - "compliance_verification"
+      can_delegate_to:
+        - "Document_Loader_Agent"  # Can delegate to loader
+        - "OCR_Agent"  # Can ask OCR to re-extract if needed
+
+    - profile: "Document_Loader_Agent"
+      engine: "AzureOpenAIAgent"
+      role: "loader"
+      capabilities:
+        - "data_loading"
+        - "data_transformation"
+        - "schema_mapping"
+      can_delegate_to: []  # End of pipeline, no further delegation
+
+  orchestration_rules:
+    - condition: "document_processing"
+      action: "sequential_delegation"
+      description: "Process document through all three agents"
+      flow:
+        - profile: "OCR_Agent"
+          task: "Extract text and structure from document"
+        - profile: "Business_Validation_Agent"
+          task: "Validate extracted data"
+        - profile: "Document_Loader_Agent"
+          task: "Prepare for loading"
+
+    - condition: "validation_failed"
+      action: "retry_with_ocr"
+      description: "If validation fails, ask OCR to re-extract with more care"
+
+  communication:
+    message_format: "structured"
+    include_context: true
+    max_delegation_depth: 3
+    timeout_seconds: 60

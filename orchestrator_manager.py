@@ -1,7 +1,6 @@
 import os
 import yaml
 from typing import Dict, List, Optional, Any
-import asyncio
 import re
 
 
@@ -54,7 +53,7 @@ class AgentMessage:
         self.from_profile = from_profile
         self.to_profile = to_profile
         self.content = content
-        self.message_type = message_type  # request, response, consultation
+        self.message_type = message_type
         self.context = context or {}
         self.depth = depth
 
@@ -140,7 +139,7 @@ class OrchestrationManager:
         config = self.get_orchestration(name)
         if config:
             self.active_orchestration = config
-            self.conversation_history = []  # Clear history when switching
+            self.conversation_history = []
             print(f"Active orchestration set to: {name}")
             return True
         print(f"Orchestration '{name}' not found")
@@ -149,39 +148,31 @@ class OrchestrationManager:
     def initialize_agent_with_profile(self, profile_name: str, engine_name: str = None):
         """Initialize an agent with a specific profile"""
         try:
-            # Get the engine to use
             if engine_name is None:
                 engine_name = self.active_orchestration.profile_to_engine.get(
                     profile_name,
                     'AzureOpenAIAgent'
                 )
 
-            # Get the agent instance
             agent = self.nexus.get_agent(engine_name)
-
-            # Apply profile
             profile = self.nexus.get_profile(profile_name)
             agent.profile = profile
 
-            # Apply actions if profile has them and agent supports them
             if hasattr(profile, 'actions') and profile.actions and agent.supports_actions:
                 agent.actions = self.nexus.get_actions(profile.actions)
             elif agent.supports_actions:
                 agent.actions = []
 
-            # Apply knowledge store if profile has it and agent supports it
             if hasattr(profile, 'knowledge') and profile.knowledge and agent.supports_knowledge:
                 agent.knowledge_store = profile.knowledge[0] if isinstance(profile.knowledge, list) else profile.knowledge
             elif agent.supports_knowledge:
                 agent.knowledge_store = "None"
 
-            # Apply memory store if profile has it and agent supports it
             if hasattr(profile, 'memory') and profile.memory and agent.supports_memory:
                 agent.memory_store = profile.memory[0] if isinstance(profile.memory, list) else profile.memory
             elif agent.supports_memory:
                 agent.memory_store = "None"
 
-            # Clear chat history for clean processing
             if hasattr(agent, 'messages'):
                 agent.messages = []
 
@@ -199,7 +190,6 @@ class OrchestrationManager:
         if not required_capabilities:
             return self.active_orchestration.orchestrator_profile
 
-        # Find profiles with matching capabilities
         matching_profiles = []
         for profile_name, capabilities in self.active_orchestration.profile_capabilities.items():
             match_count = sum(1 for cap in required_capabilities if cap in capabilities)
@@ -207,7 +197,6 @@ class OrchestrationManager:
                 matching_profiles.append((profile_name, match_count))
 
         if matching_profiles:
-            # Return profile with most matching capabilities
             matching_profiles.sort(key=lambda x: x[1], reverse=True)
             return matching_profiles[0][0]
 
@@ -221,43 +210,34 @@ class OrchestrationManager:
         allowed_delegates = self.active_orchestration.profile_delegation_map.get(from_profile, [])
         return to_profile in allowed_delegates
 
-    async def delegate_to_profile(
-            self,
-            message: AgentMessage
-    ) -> str:
-        """Delegate a task to a specific profile"""
+    def delegate_to_profile(self, message: AgentMessage) -> str:
+        """Delegate a task to a specific profile - SYNCHRONOUS VERSION"""
         try:
-            # Check depth limit
             max_depth = self.active_orchestration.communication.get('max_delegation_depth', 3)
             if message.depth >= max_depth:
                 return "Maximum delegation depth reached. Unable to process request."
 
-            # Check if delegation is allowed
             if not self.can_delegate(message.from_profile, message.to_profile):
                 return f"Delegation from {message.from_profile} to {message.to_profile} not allowed by configuration."
 
-            # Initialize the target agent with the profile
             agent = self.initialize_agent_with_profile(message.to_profile)
 
-            # Prepare the message context
             context_prompt = ""
             if self.active_orchestration.communication.get('include_context', True):
                 context_prompt = f"\n\nContext: You are receiving this request from {message.from_profile}. "
                 if message.context:
                     context_prompt += f"Previous context: {message.context.get('summary', '')}"
 
-            # Build the full prompt
             full_prompt = f"{message.content}{context_prompt}"
 
-            # Get response from delegated agent
-            response = agent.get_response_stream(full_prompt)
-
-            # Collect the streamed response
+            # Get response using synchronous streaming
+            response_generator = agent.get_response_stream(full_prompt)
+            
+            # Collect the full response
             full_response = ""
-            for chunk in response():
+            for chunk in response_generator():
                 full_response += chunk
 
-            # Record in conversation history
             self.conversation_history.append({
                 "from": message.from_profile,
                 "to": message.to_profile,
@@ -273,46 +253,35 @@ class OrchestrationManager:
             print(error_msg)
             return error_msg
 
-    async def orchestrate_request(
-            self,
-            user_input: str,
-            thread_id: Optional[str] = None
-    ) -> str:
-        """Main orchestration method - coordinates agents based on profiles"""
+    def orchestrate_request(self, user_input: str, thread_id: Optional[str] = None) -> str:
+        """Main orchestration method - SYNCHRONOUS VERSION"""
 
         if not self.active_orchestration:
             raise ValueError("No active orchestration configuration set")
 
         try:
-            # Initialize the orchestrator with its profile
             orchestrator = self.initialize_agent_with_profile(
                 self.active_orchestration.orchestrator_profile,
                 self.active_orchestration.orchestrator_engine
             )
 
-            # Build orchestration prompt
             orchestration_prompt = self._build_orchestration_prompt(user_input)
 
-            # Get orchestrator's decision/response
-            response = orchestrator.get_response_stream(orchestration_prompt)
+            response_generator = orchestrator.get_response_stream(orchestration_prompt)
 
-            # Collect the response
             full_response = ""
-            for chunk in response():
+            for chunk in response_generator():
                 full_response += chunk
 
-            # Parse if orchestrator wants to delegate
             delegation_needed = self._check_for_delegation(full_response)
 
             if delegation_needed:
-                # Handle delegation to next profile in chain
-                delegated_response = await self._handle_delegation(
+                delegated_response = self._handle_delegation(
                     user_input,
                     full_response,
                     self.active_orchestration.orchestrator_profile
                 )
 
-                # Synthesize final response
                 synthesis_prompt = f"""Based on the following information:
 Original request: {user_input}
 Your initial processing: {full_response}
@@ -320,9 +289,9 @@ Result from {self._extract_delegate_profile(full_response)}: {delegated_response
 
 Provide a comprehensive final response to the user."""
 
-                final_response = orchestrator.get_response_stream(synthesis_prompt)
+                final_generator = orchestrator.get_response_stream(synthesis_prompt)
                 synthesized = ""
-                for chunk in final_response():
+                for chunk in final_generator():
                     synthesized += chunk
 
                 return synthesized
@@ -339,8 +308,6 @@ Provide a comprehensive final response to the user."""
 
         available_profiles = []
         current_profile = self.active_orchestration.orchestrator_profile
-
-        # Get profiles this orchestrator can delegate to
         can_delegate_to = self.active_orchestration.profile_delegation_map.get(current_profile, [])
 
         for profile_name in can_delegate_to:
@@ -387,36 +354,31 @@ User request: {user_input}"""
             return match.group(1)
         return "Unknown"
 
-    async def _handle_delegation(
+    def _handle_delegation(
             self,
             original_request: str,
             orchestrator_response: str,
             from_profile: str
     ) -> str:
-        """Handle delegation to specialist profiles"""
+        """Handle delegation to specialist profiles - SYNCHRONOUS VERSION"""
 
         try:
-            # Parse delegation instruction
             lines = orchestrator_response.split('\n')
             delegation_line = lines[0]
 
-            # Extract target profile name
             match = re.search(r'\[DELEGATE:\s*([\w_]+)\]', delegation_line)
             if not match:
                 return "Delegation parsing error: Could not extract profile name"
 
             target_profile = match.group(1)
 
-            # Check if delegation is allowed
             if not self.can_delegate(from_profile, target_profile):
                 return f"Delegation from {from_profile} to {target_profile} not allowed"
 
-            # Extract the actual task for the delegate
             task = '\n'.join(lines[1:]).strip()
             if not task:
                 task = original_request
 
-            # Create and send message
             message = AgentMessage(
                 from_profile=from_profile,
                 to_profile=target_profile,
@@ -426,11 +388,10 @@ User request: {user_input}"""
                 depth=1
             )
 
-            response = await self.delegate_to_profile(message)
+            response = self.delegate_to_profile(message)
 
-            # Check if the delegate wants to delegate further
             if self._check_for_delegation(response):
-                response = await self._handle_delegation(original_request, response, target_profile)
+                response = self._handle_delegation(original_request, response, target_profile)
 
             return response
 
@@ -438,28 +399,19 @@ User request: {user_input}"""
             return f"Error handling delegation: {str(e)}"
 
     def orchestrate_request_stream(self, user_input: str, thread_id: Optional[str] = None):
-        """Stream version of orchestrate_request for UI integration"""
+        """Stream version - returns a generator like agent.get_response_stream()"""
 
         if not self.active_orchestration:
             yield "Error: No active orchestration configuration set"
             return
 
         try:
-            # Create and run event loop
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Get the full response synchronously
+            result = self.orchestrate_request(user_input, thread_id)
 
-            try:
-                result = loop.run_until_complete(
-                    self.orchestrate_request(user_input, thread_id)
-                )
-
-                # Stream the result character by character for UI consistency
-                for char in result:
-                    yield char
-
-            finally:
-                loop.close()
+            # Stream it character by character for UI consistency
+            for char in result:
+                yield char
 
         except Exception as e:
             yield f"Error during orchestration: {str(e)}"

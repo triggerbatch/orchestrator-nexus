@@ -39,15 +39,27 @@ def agent_panel(chat):
             # Display orchestration details
             with st.expander("Orchestration Details", expanded=True):
                 st.write(f"**Description:** {orchestration_config.description}")
-                st.write(f"**Main Orchestrator:** {orchestration_config.orchestrator_agent}")
-                st.write(f"**Profile:** {orchestration_config.orchestrator_profile}")
+                st.write(f"**Main Orchestrator Engine:** {orchestration_config.orchestrator_engine}")
+                st.write(f"**Orchestrator Profile:** {orchestration_config.orchestrator_profile}")
 
                 st.write("**Agent Network:**")
                 for agent_cfg in orchestration_config.agent_network:
-                    st.write(f"- **{agent_cfg['agent_name']}** ({agent_cfg['role']})")
+                    st.write(f"- **{agent_cfg['profile']}** ({agent_cfg['role']})")
+                    st.write(f"  Engine: {agent_cfg.get('engine', 'AzureOpenAIAgent')}")
                     st.write(f"  Capabilities: {', '.join(agent_cfg.get('capabilities', []))}")
                     if agent_cfg.get('can_delegate_to'):
                         st.write(f"  Can delegate to: {', '.join(agent_cfg['can_delegate_to'])}")
+
+                # Display orchestration rules if present
+                if orchestration_config.orchestration_rules:
+                    st.write("**Orchestration Rules:**")
+                    for rule in orchestration_config.orchestration_rules:
+                        st.write(f"- {rule.get('condition', 'N/A')}: {rule.get('action', 'N/A')}")
+
+                # Display communication settings
+                st.write("**Communication Settings:**")
+                st.write(f"- Max delegation depth: {orchestration_config.communication.get('max_delegation_depth', 3)}")
+                st.write(f"- Include context: {orchestration_config.communication.get('include_context', True)}")
 
             # Show A2A conversation history
             with st.expander("A2A Conversation History", expanded=False):
@@ -56,7 +68,13 @@ def agent_panel(chat):
                     for idx, conv in enumerate(history):
                         st.write(f"**{idx + 1}. {conv['from']} → {conv['to']}** (Depth: {conv['depth']})")
                         st.write(f"Request: {conv['request'][:100]}...")
+                        if len(conv['request']) > 100:
+                            with st.expander("Full Request"):
+                                st.write(conv['request'])
                         st.write(f"Response: {conv['response'][:100]}...")
+                        if len(conv['response']) > 100:
+                            with st.expander("Full Response"):
+                                st.write(conv['response'])
                         st.divider()
 
                     if st.button("Clear A2A History"):

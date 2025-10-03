@@ -1,117 +1,62 @@
-def initialize_agent_with_profile(self, profile_name: str, engine_name: str = None):
-    """Initialize an agent with a specific profile and load all configurations"""
+def get_filtered_tools_for_profile(self):
+    """Get only the MCP tools that are assigned to this agent's profile"""
     try:
-        # Determine engine name
-        if engine_name is None:
-            engine_name = self.active_orchestration.profile_to_engine.get(
-                profile_name,
-                'AzureOpenAIAgent'
-            )
+        print(f"\n[FILTER] === ENTERED get_filtered_tools_for_profile ===")
         
-        print(f"\n[INIT] Initializing agent with profile: {profile_name}, engine: {engine_name}")
+        all_mcp_tools = asyncio.run(self.get_tools())
         
-        # Get agent and profile
-        agent = self.nexus.get_agent(engine_name)
-        profile = self.nexus.get_profile(profile_name)
-        agent.profile = profile
+        print(f"[FILTER] all_mcp_tools retrieved: {len(all_mcp_tools)}")
         
-        # Get agent configuration from orchestration network
-        agent_config = next(
-            (cfg for cfg in self.active_orchestration.agent_network 
-             if cfg.get('profile') == profile_name),
-            None
-        )
+        if not self.actions or len(self.actions) == 0:
+            print(f"[FILTER] No actions configured - returning empty list")
+            return []
         
-        # ===== ACTIONS ===== THIS IS THE FIX
-        if agent.supports_actions:
-            action_names = []
+        # Handle actions as either strings or dicts
+        profile_action_names = set()
+        for action in self.actions:
+            if isinstance(action, str):
+                profile_action_names.add(action)
+            elif isinstance(action, dict) and "name" in action:
+                profile_action_names.add(action["name"])
+        
+        print(f"[{self.profile.name}] Looking for tools: {profile_action_names}")
+        
+        # Filter MCP tools - FIXED TO HANDLE Tool OBJECTS
+        filtered = []
+        for tool in all_mcp_tools:
+            tool_name = None
             
-            # Priority 1: Actions from orchestration config
-            if agent_config and 'actions' in agent_config and agent_config['actions']:
-                print(f"[INIT] Loading actions from orchestration config")
-                action_names = agent_config['actions']
-            # Priority 2: Actions from profile
-            elif hasattr(profile, 'actions') and profile.actions:
-                print(f"[INIT] Loading actions from profile")
-                for action in profile.actions:
-                    if isinstance(action, str):
-                        action_names.append(action)
-                    elif isinstance(action, dict) and 'name' in action:
-                        action_names.append(action['name'])
+            # Handle Tool objects from MCP
+            if hasattr(tool, 'name'):
+                tool_name = tool.name
+            elif isinstance(tool, dict):
+                # Handle dict format
+                if 'name' in tool:
+                    tool_name = tool['name']
+                elif 'function' in tool and isinstance(tool['function'], dict):
+                    tool_name = tool['function'].get('name')
             
-            if action_names:
-                print(f"[INIT] Requesting actions: {action_names}")
-                
-                # CRITICAL FIX: Store action names as string list, not dict objects
-                # The agent will use these names to filter MCP tools
-                agent.actions = action_names
-                
-                print(f"[INIT] Set agent.actions = {agent.actions}")
-                print(f"[INIT] Configured {len(agent.actions)} action names for {profile_name}")
-            else:
-                agent.actions = []
-                print(f"[INIT] No actions configured for {profile_name}")
-        else:
-            agent.actions = []
-            print(f"[INIT] Agent engine {engine_name} does not support actions")
+            if tool_name and tool_name in profile_action_names:
+                # Convert Tool object to OpenAI format
+                if hasattr(tool, 'name'):  # It's a Tool object
+                    tool_dict = {
+                        "type": "function",
+                        "function": {
+                            "name": tool.name,
+                            "description": tool.description if hasattr(tool, 'description') else "",
+                            "parameters": tool.inputSchema if hasattr(tool, 'inputSchema') else {}
+                        }
+                    }
+                    filtered.append(tool_dict)
+                else:  # Already a dict
+                    filtered.append(tool)
         
-        # ===== KNOWLEDGE STORE =====
-        if agent.supports_knowledge:
-            knowledge_store = None
-            
-            if agent_config and 'knowledge' in agent_config:
-                knowledge_store = agent_config['knowledge']
-            elif hasattr(profile, 'knowledge') and profile.knowledge:
-                if isinstance(profile.knowledge, list):
-                    knowledge_store = profile.knowledge[0] if profile.knowledge else None
-                else:
-                    knowledge_store = profile.knowledge
-            
-            if knowledge_store and knowledge_store != "None":
-                agent.knowledge_store = knowledge_store
-                print(f"[INIT] Set knowledge store: {knowledge_store}")
-            else:
-                agent.knowledge_store = "None"
-                print(f"[INIT] No knowledge store configured")
-        else:
-            agent.knowledge_store = "None"
+        print(f"[{self.profile.name}] Found {len(filtered)} matching tools")
         
-        # ===== MEMORY STORE =====
-        if agent.supports_memory:
-            memory_store = None
-            
-            if agent_config and 'memory' in agent_config:
-                memory_store = agent_config['memory']
-            elif hasattr(profile, 'memory') and profile.memory:
-                if isinstance(profile.memory, list):
-                    memory_store = profile.memory[0] if profile.memory else None
-                else:
-                    memory_store = profile.memory
-            
-            if memory_store and memory_store != "None":
-                agent.memory_store = memory_store
-                print(f"[INIT] Set memory store: {memory_store}")
-            else:
-                agent.memory_store = "None"
-                print(f"[INIT] No memory store configured")
-        else:
-            agent.memory_store = "None"
+        return filtered
         
-        # ===== RESET MESSAGES =====
-        if hasattr(agent, 'messages'):
-            agent.messages = []
-            print(f"[INIT] Reset message history")
-        
-        if hasattr(agent, 'chat_history'):
-            agent.chat_history = []
-            print(f"[INIT] Reset chat history")
-        
-        print(f"[INIT] Agent initialization complete for {profile_name}\n")
-        
-        return agent
-
     except Exception as e:
-        print(f"[INIT] ERROR initializing agent with profile {profile_name}: {str(e)}")
+        print(f"[FILTER] EXCEPTION in get_filtered_tools_for_profile: {e}")
         import traceback
         traceback.print_exc()
-        raise
+        return []

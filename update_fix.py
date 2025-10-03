@@ -1,62 +1,17 @@
-def get_filtered_tools_for_profile(self):
-    """Get only the MCP tools that are assigned to this agent's profile"""
-    try:
-        print(f"\n[FILTER] === ENTERED get_filtered_tools_for_profile ===")
-        
-        all_mcp_tools = asyncio.run(self.get_tools())
-        
-        print(f"[FILTER] all_mcp_tools retrieved: {len(all_mcp_tools)}")
-        
-        if not self.actions or len(self.actions) == 0:
-            print(f"[FILTER] No actions configured - returning empty list")
-            return []
-        
-        # Handle actions as either strings or dicts
-        profile_action_names = set()
-        for action in self.actions:
-            if isinstance(action, str):
-                profile_action_names.add(action)
-            elif isinstance(action, dict) and "name" in action:
-                profile_action_names.add(action["name"])
-        
-        print(f"[{self.profile.name}] Looking for tools: {profile_action_names}")
-        
-        # Filter MCP tools - FIXED TO HANDLE Tool OBJECTS
-        filtered = []
-        for tool in all_mcp_tools:
-            tool_name = None
+def load_actions(self):
+    """Load actions - handles both static and MCP tools"""
+    print(f"[LOAD_ACTIONS] Loading actions")
+    self.tools = []
+    
+    for action in self.actions:
+        # Skip if action is just a string (MCP action name)
+        if isinstance(action, str):
+            print(f"[LOAD_ACTIONS] Skipping MCP action name: {action}")
+            continue
             
-            # Handle Tool objects from MCP
-            if hasattr(tool, 'name'):
-                tool_name = tool.name
-            elif isinstance(tool, dict):
-                # Handle dict format
-                if 'name' in tool:
-                    tool_name = tool['name']
-                elif 'function' in tool and isinstance(tool['function'], dict):
-                    tool_name = tool['function'].get('name')
-            
-            if tool_name and tool_name in profile_action_names:
-                # Convert Tool object to OpenAI format
-                if hasattr(tool, 'name'):  # It's a Tool object
-                    tool_dict = {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description if hasattr(tool, 'description') else "",
-                            "parameters": tool.inputSchema if hasattr(tool, 'inputSchema') else {}
-                        }
-                    }
-                    filtered.append(tool_dict)
-                else:  # Already a dict
-                    filtered.append(tool)
-        
-        print(f"[{self.profile.name}] Found {len(filtered)} matching tools")
-        
-        return filtered
-        
-    except Exception as e:
-        print(f"[FILTER] EXCEPTION in get_filtered_tools_for_profile: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+        # Handle dict-based static actions
+        if isinstance(action, dict) and "agent_action" in action:
+            self.tools.append(action["agent_action"])
+            print(f"[LOAD_ACTIONS] Added static tool: {action.get('name')}")
+    
+    print(f"[LOAD_ACTIONS] Loaded {len(self.tools)} static tools")

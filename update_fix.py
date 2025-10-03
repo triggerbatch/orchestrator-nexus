@@ -25,32 +25,18 @@ def get_filtered_tools_for_profile(self):
         filtered = []
         for tool in all_mcp_tools:
             tool_name = None
-            tool_dict = None
             
-            # Handle Tool objects from MCP
-            if hasattr(tool, 'name'):
-                tool_name = tool.name
-                # Convert Tool object to OpenAI format
-                tool_dict = {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": getattr(tool, 'description', ''),
-                        "parameters": getattr(tool, 'inputSchema', {})
-                    }
-                }
-            elif isinstance(tool, dict):
-                # Already a dict - use as-is or extract name
+            # Tools are already dicts in OpenAI format from your MCP server
+            if isinstance(tool, dict):
+                # Check direct name
                 if 'name' in tool:
                     tool_name = tool['name']
-                    tool_dict = tool
+                # Check nested function.name (OpenAI format)
                 elif 'function' in tool and isinstance(tool['function'], dict):
                     tool_name = tool['function'].get('name')
-                    tool_dict = tool
-            
-            if tool_name and tool_name in profile_action_names:
-                if tool_dict:
-                    filtered.append(tool_dict)
+                
+                if tool_name and tool_name in profile_action_names:
+                    filtered.append(tool)  # Use as-is, already in correct format
                     print(f"[{self.profile.name}] ✓ Added tool: {tool_name}")
         
         print(f"[{self.profile.name}] Found {len(filtered)} matching tools")
